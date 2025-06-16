@@ -100,6 +100,8 @@ public class UserService {
                     .password(request.getPassword())
                     .userKeycloakId(userKeycloakId)
                     .password(passwordEncoder.encode(request.getPassword()))
+                    .firstName(request.getFirstName())
+                    .lastName(request.getLastName())
                     .provider(AuthProvider.LOCAL)
                     .isActive(true)
                     .build();
@@ -141,7 +143,7 @@ public class UserService {
 
         identityClient.resetUserPassword(
                 "Bearer " + accessToken,
-                "security-keycloak",
+                "wander-link",
                 userKeycloakId,
                 Credential.builder()
                         .type("password")

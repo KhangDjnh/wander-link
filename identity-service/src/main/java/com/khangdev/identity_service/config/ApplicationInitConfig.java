@@ -31,6 +31,7 @@ public class ApplicationInitConfig {
                         .lastName("Khang")
                         .userKeycloakId("aec921fa-6dfa-43a1-8473-28b4628f475b")
                         .provider(AuthProvider.LOCAL)
+                        .isActive(true)
                         .build();
                 userRepository.save(user);
                 log.warn("Info: Admin user created with default password");
