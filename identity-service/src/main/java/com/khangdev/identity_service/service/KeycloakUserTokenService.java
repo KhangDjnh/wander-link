@@ -103,7 +103,7 @@ public class KeycloakUserTokenService {
                 .refreshExpiresIn(String.valueOf(Duration.between(Instant.now(), refreshTokenExpiry).getSeconds()))
                 .tokenType("Bearer")
                 .idToken("N/A")
-                .scope("openid")
+                .scope("openid openid profile email roles")
                 .build();
     }
 
