@@ -1,7 +1,7 @@
 package com.khangdev.identity_service.service;
 
+import com.khangdev.identity_service.dto.CachedUserToken;
 import com.khangdev.identity_service.dto.request.LoginRequest;
-import com.khangdev.identity_service.entity.User;
 import com.khangdev.identity_service.exception.AppException;
 import com.khangdev.identity_service.exception.ErrorCode;
 import com.khangdev.identity_service.identity.UserAccessTokenExchangeParam;
@@ -9,7 +9,7 @@ import com.khangdev.identity_service.identity.UserRefreshTokenExchangeParam;
 import com.khangdev.identity_service.identity.UserTokenExchangeResponse;
 import com.khangdev.identity_service.repository.IdentityClient;
 import com.khangdev.identity_service.repository.UserRepository;
-import feign.FeignException;
+import com.khangdev.identity_service.repository.UserTokenCacheRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,11 +17,13 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 
-@Service
 @RequiredArgsConstructor
+@Service
 public class KeycloakUserTokenService {
+
     private final IdentityClient identityClient;
     private final UserRepository userRepository;
+    private final UserTokenCacheRepository tokenCacheRepository;
 
     @Value("${idp.client-id}")
     private String clientId;
@@ -29,88 +31,77 @@ public class KeycloakUserTokenService {
     @Value("${idp.client-secret}")
     private String clientSecret;
 
-    private String cachedToken;
-    private Instant tokenExpiry;
-    private String refreshToken;
-    private Instant refreshTokenExpiry;
-
-
-    public synchronized String getAccessToken(LoginRequest request) {
-        if (cachedToken == null || tokenExpiry == null || Instant.now().isAfter(tokenExpiry.minusSeconds(60))) {
-            refreshToken(request);
-        }
-        return cachedToken;
-    }
-
-    private void refreshToken(LoginRequest request) {
-        try {
-            if (refreshToken != null && Instant.now().isBefore(refreshTokenExpiry)) {
-                // Gọi grant_type=refresh_token
-                UserRefreshTokenExchangeParam param = UserRefreshTokenExchangeParam.builder()
-                        .grant_type("refresh_token")
-                        .client_id(clientId)
-                        .client_secret(clientSecret)
-                        .refresh_token(refreshToken)
-                        .build();
-
-                UserTokenExchangeResponse response = identityClient.exchangeUserRefreshToken(param);
-
-                if (response == null || response.getAccessToken() == null)
-                    throw new AppException(ErrorCode.UNAUTHORIZED); // Tùy bạn định nghĩa
-
-                this.cachedToken = response.getAccessToken();
-                this.tokenExpiry = Instant.now().plusSeconds(Long.parseLong(response.getExpiresIn()));
-                this.refreshToken = response.getRefreshToken();
-                this.refreshTokenExpiry = Instant.now().plusSeconds(Long.parseLong(response.getRefreshExpiresIn()));
-
-            } else {
-                UserAccessTokenExchangeParam param = UserAccessTokenExchangeParam.builder()
-                        .grant_type("password")
-                        .client_id(clientId)
-                        .client_secret(clientSecret)
-                        .username(getKeycloakUsername(request.getEmail()))
-                        .password(request.getPassword())
-                        .scope("openid")
-                        .build();
-
-                UserTokenExchangeResponse response = identityClient.exchangeUserAccessToken(param);
-
-                if (response == null || response.getAccessToken() == null)
-                    throw new AppException(ErrorCode.UNAUTHORIZED);
-
-                this.cachedToken = response.getAccessToken();
-                this.tokenExpiry = Instant.now().plusSeconds(Long.parseLong(response.getExpiresIn()));
-                this.refreshToken = response.getRefreshToken();
-                this.refreshTokenExpiry = Instant.now().plusSeconds(Long.parseLong(response.getRefreshExpiresIn()));
-            }
-        } catch (FeignException e) {
-            throw new AppException(ErrorCode.UNAUTHORIZED);
-        } catch (Exception e) {
-            throw new AppException(ErrorCode.INTERNAL_ERROR);
-        }
-    }
-
-
     public synchronized UserTokenExchangeResponse getTokenInfo(LoginRequest request) {
-        if (cachedToken == null || tokenExpiry == null || Instant.now().isAfter(tokenExpiry.minusSeconds(60))) {
-            refreshToken(request);
+        String email = request.getEmail();
+        CachedUserToken cached = tokenCacheRepository.getToken(email);
+
+        if (cached != null && Instant.now().isBefore(cached.getAccessTokenExpiry().minusSeconds(60))) {
+            return buildResponse(cached);
         }
 
+        return refreshToken(request, cached);
+    }
+
+    private UserTokenExchangeResponse refreshToken(LoginRequest request, CachedUserToken cachedToken) {
+        UserTokenExchangeResponse response;
+
+        if (cachedToken != null && cachedToken.getRefreshToken() != null
+                && Instant.now().isBefore(cachedToken.getRefreshTokenExpiry())) {
+
+            UserRefreshTokenExchangeParam param = UserRefreshTokenExchangeParam.builder()
+                    .grant_type("refresh_token")
+                    .client_id(clientId)
+                    .client_secret(clientSecret)
+                    .refresh_token(cachedToken.getRefreshToken())
+                    .build();
+
+            response = identityClient.exchangeUserRefreshToken(param);
+
+        } else {
+            String username = getKeycloakUsername(request.getEmail());
+
+            UserAccessTokenExchangeParam param = UserAccessTokenExchangeParam.builder()
+                    .grant_type("password")
+                    .client_id(clientId)
+                    .client_secret(clientSecret)
+                    .username(username)
+                    .password(request.getPassword())
+                    .scope("openid")
+                    .build();
+
+            response = identityClient.exchangeUserAccessToken(param);
+        }
+
+        Instant now = Instant.now();
+        CachedUserToken newToken = CachedUserToken.builder()
+                .accessToken(response.getAccessToken())
+                .refreshToken(response.getRefreshToken())
+                .accessTokenExpiry(now.plusSeconds(Long.parseLong(response.getExpiresIn())))
+                .refreshTokenExpiry(now.plusSeconds(Long.parseLong(response.getRefreshExpiresIn())))
+                .build();
+
+        tokenCacheRepository.saveToken(request.getEmail(), newToken,
+                Duration.ofSeconds(Long.parseLong(response.getRefreshExpiresIn())));
+
+        return buildResponse(newToken);
+    }
+
+    private UserTokenExchangeResponse buildResponse(CachedUserToken token) {
         return UserTokenExchangeResponse.builder()
-                .accessToken(cachedToken)
-                .refreshToken(refreshToken)
-                .expiresIn(String.valueOf(Duration.between(Instant.now(), tokenExpiry).getSeconds()))
-                .refreshExpiresIn(String.valueOf(Duration.between(Instant.now(), refreshTokenExpiry).getSeconds()))
+                .accessToken(token.getAccessToken())
+                .refreshToken(token.getRefreshToken())
+                .expiresIn(String.valueOf(Duration.between(Instant.now(), token.getAccessTokenExpiry()).getSeconds()))
+                .refreshExpiresIn(String.valueOf(Duration.between(Instant.now(), token.getRefreshTokenExpiry()).getSeconds()))
                 .tokenType("Bearer")
                 .idToken("N/A")
-                .scope("openid openid profile email roles")
+                .scope("openid profile email")
                 .build();
     }
 
     private String getKeycloakUsername(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
-        return user.getUsername();
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND))
+                .getUsername();
     }
-
 }
+
