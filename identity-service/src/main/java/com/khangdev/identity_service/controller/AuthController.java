@@ -39,4 +39,21 @@ public class AuthController {
                 .build();
     }
 
+    @PostMapping("/logout")
+    ApiResponse<Void> logout(@RequestBody String refreshToken) {
+        userService.logout(refreshToken);
+        return ApiResponse.<Void>builder()
+                .code(1000)
+                .message("Success")
+                .build();
+    }
+
+    @PostMapping("/verify-token")
+    ApiResponse<Boolean> verifyToken(@RequestBody String token) {
+        return ApiResponse.<Boolean>builder()
+                .code(1000)
+                .message("Success")
+                .result(userService.verifyToken(token))
+                .build();
+    }
 }

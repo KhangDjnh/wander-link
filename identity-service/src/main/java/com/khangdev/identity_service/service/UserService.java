@@ -21,6 +21,8 @@ import feign.FeignException;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
+import lombok.experimental.NonFinal;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,6 +30,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -42,6 +45,9 @@ public class UserService {
     KeycloakClientTokenService keycloakClientTokenService;
     KeycloakUserTokenService keycloakUserTokenService;
     UserMapper  userMapper;
+
+    @Value("${idp.client-id}")
+    @NonFinal String clientId;
 
     public LoginResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
@@ -62,6 +68,26 @@ public class UserService {
                 .user(userMapper.toUserResponse(user))
                 .build();
     }
+
+    public void logout(String refreshToken) {
+        try {
+            String clientAccessToken = keycloakClientTokenService.getAccessToken();
+            identityClient.logout("Bearer " + clientAccessToken, refreshToken, clientId);
+        } catch (FeignException e) {
+            throw errorNormalizer.handleKeycloakException(e);
+        }
+    }
+
+    public boolean verifyToken(String token) {
+        try {
+            String clientAccessToken = keycloakClientTokenService.getAccessToken();
+            Map<String, Object> result = identityClient.introspectToken("Bearer " + clientAccessToken, token, "access_token");
+            return Boolean.TRUE.equals(result.get("active"));
+        } catch (FeignException e) {
+            throw errorNormalizer.handleKeycloakException(e);
+        }
+    }
+
     public UserResponse createUser(UserRequestDTO request) {
         if(userRepository.existsByEmail(request.getEmail())){
             throw new AppException(ErrorCode.EMAIL_EXISTED);

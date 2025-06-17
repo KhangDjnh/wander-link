@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @FeignClient(name = "identity-client", url = "${idp.url}")
 public interface IdentityClient {
@@ -57,4 +58,19 @@ public interface IdentityClient {
             @PathVariable("userId") String userId,
             @RequestBody List<RoleRepresentation> roles
     );
+    @PostMapping(value = "/realms/wander-link/protocol/openid-connect/logout",
+            consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    void logout(@RequestHeader("Authorization") String clientToken,
+                @RequestParam("refresh_token") String refreshToken,
+                @RequestParam("client_id") String clientId
+    );
+
+    @PostMapping(value = "/realms/wander-link/protocol/openid-connect/token/introspect",
+            consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    Map<String, Object> introspectToken(
+            @RequestHeader("Authorization") String clientToken,
+            @RequestParam("token") String token,
+            @RequestParam("token_type_hint") String tokenTypeHint
+    );
+
 }

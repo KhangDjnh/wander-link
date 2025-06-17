@@ -10,21 +10,23 @@ import java.time.Duration;
 @Repository
 @RequiredArgsConstructor
 public class UserTokenCacheRepository {
-    private final RedisTemplate<String, CachedUserToken> redisTemplate;
+
+    private final RedisTemplate<String, CachedUserToken> cachedUserTokenRedisTemplate;
 
     private String key(String email) {
         return "user-token:" + email;
     }
 
     public CachedUserToken getToken(String email) {
-        return redisTemplate.opsForValue().get(key(email));
+        return cachedUserTokenRedisTemplate.opsForValue().get(key(email));
     }
 
     public void saveToken(String email, CachedUserToken token, Duration ttl) {
-        redisTemplate.opsForValue().set(key(email), token, ttl);
+        cachedUserTokenRedisTemplate.opsForValue().set(key(email), token, ttl);
     }
 
     public void deleteToken(String email) {
-        redisTemplate.delete(key(email));
+        cachedUserTokenRedisTemplate.delete(key(email));
     }
 }
+
